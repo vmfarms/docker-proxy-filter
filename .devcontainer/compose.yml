@@ -1,0 +1,55 @@
+version: '3.7'
+services:
+  # Update this to the name of the service you want to work with in your docker-compose.yml file
+  dev:
+    # Uncomment if you want to override the service's Dockerfile to one in the .devcontainer 
+    # folder. Note that the path of the Dockerfile and context is relative to the *primary* 
+    # docker-compose.yml file (the first in the devcontainer.json "dockerComposeFile"
+    # array). The sample below assumes your primary file is in the root of your project.
+    #
+    # build:
+    #   context: .
+    #   dockerfile: .devcontainer/Dockerfile
+
+    image: "mcr.microsoft.com/devcontainers/rust:1-1-bullseye"
+
+    volumes:
+      # Update this to wherever you want VS Code to mount the folder of your project
+      - ..:/workspaces:cached
+    command: sleep infinity
+
+  dockerproxy:
+    image: wollomatic/socket-proxy:1.10.0
+    restart: unless-stopped
+    user: 0:0
+    mem_limit: 64M
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges
+    command:
+      # - '-loglevel=info'
+
+      - '-loglevel=debug'
+      - '-allowGET=.*'
+      - '-allowHEAD=.*'
+      - '-allowPOST=.*'
+      - '-allowPUT=.*'
+      - '-allowPATCH=.*'
+      - '-allowDELETE=.*'
+      - '-allowCONNECT=.*'
+      - '-allowTRACE=.*'
+      - '-allowOPTIONS=.*'
+
+      - '-listenip=0.0.0.0'
+      - '-allowfrom=0.0.0.0/0'
+
+      #- '-allowGET=/_ping|v1\..{1,2}/(info|containers/json|events)'
+      #- '-allowGET=/v1\..{1,2}/(version|containers/.*|events.*)'
+      - '-allowbindmountfrom=/var/log,/tmp' # restrict bind mounts to specific directories
+      - '-watchdoginterval=3600' # check once per hour for socket availability
+      - '-stoponwatchdog' # halt program on error and let compose restart it
+      - '-shutdowngracetime=5' # wait 5 seconds before shutting down
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
