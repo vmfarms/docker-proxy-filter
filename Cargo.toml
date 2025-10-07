@@ -20,3 +20,9 @@ slog-scope = "4.4.0"
 slog-stdlog = "4.1.1"
 slog-term = "2.9.2"
 url = "2.5.7"
+
+[profile.release]
+strip = true  # Automatically strip symbols from the binary.
+opt-level = "z"  # Optimize for size.
+lto = true
+codegen-units = 1
