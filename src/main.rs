@@ -84,7 +84,7 @@ async fn forward(
     body: ntex::util::Bytes,
     client: web::types::State<http::Client>,
     forward_url: web::types::State<url::Url>,
-    container_name: web::types::State<String>,
+    container_names: web::types::State<Vec<String>>,
     scrub_env: web::types::State<bool>,
     data: web::types::State<AppStateWithContainerMap>
 ) -> Result<web::HttpResponse, web::Error> {
@@ -107,7 +107,7 @@ async fn forward(
             let containers = &res.json::<Vec<ContainerSummary>>().await.unwrap();
             
             let filtered_containers = containers.into_iter()
-                .filter(|&con| is_container_named(con, &container_name.get_ref()))
+                .filter(|&con| is_container_named(con, &container_names.get_ref()))
                 .collect::<Vec<&ContainerSummary>>();
 
             let fresp = web::HttpResponse::build(res.status()).json(&filtered_containers);
@@ -137,7 +137,8 @@ async fn forward(
                     
                     match name_val {
                         Some(n) => {
-                            if n.contains(container_name.get_ref()) { //n.iter().any(|x| x.contains(container_name.get_ref())) {
+                            if container_names.get_ref().iter().any(|x| n.contains(x)) {
+                            //if n.contains(container_name.get_ref()) { //n.iter().any(|x| x.contains(container_name.get_ref())) {
 
                                 if m.resource == "json" {
 
@@ -205,9 +206,9 @@ fn match_container_get(haystack: &str) -> Option<GetMatch> {
 //    match_container_get(&haystack).is_some()
 // }
 
-fn is_container_named(container: &ContainerSummary, container_name: &String) -> bool {
-    return Option::is_some(&container.names.clone().unwrap().iter().find(|&y|  { 
-        return y.contains(container_name);
+fn is_container_named(container: &ContainerSummary, container_names: &Vec<String>) -> bool {
+    return Option::is_some(&container.names.clone().unwrap().iter().find(|&y|  {
+        return container_names.iter().any(|z| y.contains(z));
     }));
 }
 
@@ -254,29 +255,27 @@ async fn main() -> std::io::Result<()> {
     let _log_guard = slog_stdlog::init().unwrap();
 
 
-    let proxy_url_env = env::var("PROXY_URL");
     let mut proxy_url: String = String::new();
 
-    match proxy_url_env {
+    match env::var("PROXY_URL") {
         Ok(val) => {
             info!("PROXY_URL: {val}");
             proxy_url.push_str(&val);
         },
-        Err(e) => {
+        Err(_) => {
             error!("Missing PROXY_URL");
             panic!();
         },
     }
 
-    let container_name_env = env::var("CONTAINER_NAME");
-    let mut container_name: String = String::new();
+    let container_names: Vec<String>;
 
-    match container_name_env {
+    match env::var("CONTAINER_NAME") {
         Ok(val) => {
-            info!("CONTAINER_NAME: {val}");
-            container_name.push_str(&val);
+            container_names  = val.split(',').map(|x| x.trim().to_string()).collect();
+            info!("CONTAINER_NAMES: {}", container_names.join(" | "));
         },
-        Err(e) => {
+        Err(_) => {
             error!("Missing CONTAINER_NAME");
             panic!();
         },
@@ -288,7 +287,7 @@ async fn main() -> std::io::Result<()> {
             info!("SCRUB_ENVS: {truthy}");
             truthy
         },
-        Err(e) => {
+        Err(_) => {
             info!("SCRUB_ENVS: false");
             false
         },
@@ -304,8 +303,7 @@ async fn main() -> std::io::Result<()> {
         web::App::new()
             .state(http::Client::new())
             .state(forward_url.clone())
-            .state(container_name.clone())
-            //.state(logger.clone())
+            .state(container_names.clone())
             .state(cm.clone())
             .state(scub_env.clone())
             .wrap(web::middleware::Logger::default())
