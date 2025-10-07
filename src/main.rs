@@ -34,10 +34,10 @@ struct GetMatch {
     resource: String
 }
 
-// #[derive(Serialize, Deserialize)]
-// struct DockerErrorMessage {
-//     pub message: Option<String>
-// }
+#[derive(Serialize, Deserialize)]
+struct DockerErrorMessage {
+    pub message: String
+}
 
 #[derive(Serialize, Deserialize)]
 struct ContainerSummary {
@@ -98,6 +98,7 @@ async fn forward(
         .map_err(web::Error::from)?;
 
     let mut client_resp = web::HttpResponse::build(res.status());
+    client_resp.content_type(res.content_type());
 
     if res.status() == 200 {
 
@@ -110,7 +111,7 @@ async fn forward(
                 .collect::<Vec<&ContainerSummary>>();
 
             let fresp = web::HttpResponse::build(res.status()).json(&filtered_containers);
-
+            debug!("{} of {} containers valid", filtered_containers.len(), containers.len());
             Ok(fresp)
         } else {
 
@@ -118,13 +119,15 @@ async fn forward(
                 Some (m) => {
                     let mut cm = data.container_map.lock().unwrap();
                     if !cm.contains_key(&m.id) {
-                        let id_res = get_container_name(&forward_url.to_string(), &m.id).await;
-                        match id_res {
-                            Ok(id) => {
-                                cm.insert(m.id.clone(), Some(id));
+                        debug!("Requested container Id not in map, trying to inspect: {}", &m.id);
+                        let name_res = get_container_name(&forward_url.to_string(), &m.id).await;
+                        match name_res {
+                            Ok(name) => {
+                                debug!("Container Id {} has name '{}'", &m.id, &name);
+                                cm.insert(m.id.clone(), Some(name));
                             }
                             Err(e) => {
-                                warn!("Could not get container info: {e}");
+                                warn!("Could not inspect container {}: {e}", &m.id);
                                 cm.insert(m.id.clone(), None);
                             }
                         }
@@ -153,13 +156,15 @@ async fn forward(
                                     Ok(client_resp.streaming(res.into_stream()))
                                 }
                             } else {
+                                debug!("Container {} does not include container filter name, 404ing...", &m.id);
                                 client_resp.status(StatusCode::NOT_FOUND);
-                                Ok(client_resp.finish())
+                                Ok(client_resp.json(&DockerErrorMessage { message: format!("No such container: {}", &m.id)}))
                             }
                         }
                         None => {
+                            debug!("Container {} does not exist or Docker API previously returned an error, 404ing...", &m.id);
                             client_resp.status(StatusCode::NOT_FOUND);
-                            Ok(client_resp.finish())
+                            Ok(client_resp.json(&DockerErrorMessage { message: format!("No such container: {}", &m.id)}))
                         }
                     }
                 }
