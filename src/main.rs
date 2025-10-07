@@ -2,6 +2,10 @@
 extern crate slog;
 extern crate slog_async;
 extern crate slog_term;
+extern crate slog_scope;
+extern crate slog_stdlog;
+#[macro_use]
+extern crate log;
 
 use futures_util::TryStreamExt;
 use ::http::StatusCode;
@@ -79,7 +83,7 @@ async fn forward(
     client: web::types::State<http::Client>,
     forward_url: web::types::State<url::Url>,
     container_name: web::types::State<String>,
-    log: web::types::State<Logger>,
+    //log: web::types::State<Logger>,
     scrub_env: web::types::State<bool>,
     data: web::types::State<AppStateWithContainerMap>
 ) -> Result<web::HttpResponse, web::Error> {
@@ -93,8 +97,6 @@ async fn forward(
         .map_err(web::Error::from)?;
 
     let mut client_resp = web::HttpResponse::build(res.status());
-
-    info!(log, "test");
 
     if res.status() == 200 {
 
@@ -115,13 +117,13 @@ async fn forward(
                 Some (m) => {
                     let mut cm = data.container_map.lock().unwrap();
                     if !cm.contains_key(&m.id) {
-                        let id_res = get_container_name(&forward_url.to_string(), &m.id, &log).await;
+                        let id_res = get_container_name(&forward_url.to_string(), &m.id).await;
                         match id_res {
                             Ok(id) => {
                                 cm.insert(m.id.clone(), Some(id));
                             }
                             Err(e) => {
-                                warn!(log, "Could not get container info"; "error" => %e);
+                                warn!("Could not get container info: {e}");
                                 cm.insert(m.id.clone(), None);
                             }
                         }
@@ -211,7 +213,7 @@ fn is_container_named(container: &ContainerSummary, container_name: &String) -> 
     }));
 }
 
-async fn get_container_name(u: &String, container_id: &String, log: &Logger) -> Result<String, Box<dyn std::error::Error>> {
+async fn get_container_name(u: &String, container_id: &String) -> Result<String, Box<dyn std::error::Error>> {
 
     let url = format!("{}containers/{id}/json", u, id = container_id);
     //debug!(log, "Get Container URL: {}", url);
@@ -244,7 +246,11 @@ async fn main() -> std::io::Result<()> {
     let decorator = slog_term::TermDecorator::new().build();
     let drain = slog_term::FullFormat::new(decorator).build().fuse();
     let drain = slog_async::Async::new(drain).build().fuse();
-    let log = slog::Logger::root(drain, o!());
+    let logger = slog::Logger::root(drain, o!());
+
+    let _guard = slog_scope::set_global_logger(logger);
+    slog_scope::scope(&slog_scope::logger().new(o!("scope" => "1")), || ());
+    let _log_guard = slog_stdlog::init().unwrap();
 
     dotenv().ok();
 
@@ -254,11 +260,11 @@ async fn main() -> std::io::Result<()> {
 
     match proxy_url_env {
         Ok(val) => {
-            info!(log, "PROXY_URL: {}", val);
+            info!("PROXY_URL: {val}");
             proxy_url.push_str(&val);
         },
         Err(e) => {
-            crit!(log, "Missing PROXY_URL"; "error" => %e);
+            error!("Missing PROXY_URL");
             panic!();
         },
     }
@@ -268,11 +274,11 @@ async fn main() -> std::io::Result<()> {
 
     match container_name_env {
         Ok(val) => {
-            info!(log, "CONTAINER_NAME: {}", val);
+            info!("CONTAINER_NAME: {val}");
             container_name.push_str(&val);
         },
         Err(e) => {
-            crit!(log, "Missing CONTAINER_NAME"; "error" => %e);
+            error!("Missing CONTAINER_NAME");
             panic!();
         },
     }
@@ -280,11 +286,11 @@ async fn main() -> std::io::Result<()> {
     let scub_env =  match env::var("SCRUB_ENVS") {
         Ok(val) => {
             let truthy = val == "true";
-            info!(log, "SCRUB_ENVS: {}", truthy);
+            info!("SCRUB_ENVS: {truthy}");
             truthy
         },
         Err(e) => {
-            info!(log, "SCRUB_ENVS: false");
+            info!("SCRUB_ENVS: false");
             false
         },
     };
@@ -300,7 +306,7 @@ async fn main() -> std::io::Result<()> {
             .state(http::Client::new())
             .state(forward_url.clone())
             .state(container_name.clone())
-            .state(log.clone())
+            //.state(logger.clone())
             .state(cm.clone())
             .state(scub_env.clone())
             .wrap(web::middleware::Logger::default())
