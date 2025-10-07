@@ -7,12 +7,14 @@ extern crate slog_stdlog;
 #[macro_use]
 extern crate log;
 
+use slog_envlogger;
+
 use futures_util::TryStreamExt;
 use ::http::StatusCode;
-use ntex::{http::{self, HttpMessage}, web::{self, HttpResponse, Responder}};
+use ntex::{http::{self, HttpMessage}, web::{self}};
 use std::sync::{Arc, Mutex};
 
-use slog::{Drain, Logger};
+use slog::{Drain};
 use dotenv::dotenv;
 use std::env;
 use std::collections::HashMap;
@@ -83,7 +85,6 @@ async fn forward(
     client: web::types::State<http::Client>,
     forward_url: web::types::State<url::Url>,
     container_name: web::types::State<String>,
-    //log: web::types::State<Logger>,
     scrub_env: web::types::State<bool>,
     data: web::types::State<AppStateWithContainerMap>
 ) -> Result<web::HttpResponse, web::Error> {
@@ -199,14 +200,6 @@ fn match_container_get(haystack: &str) -> Option<GetMatch> {
 //    match_container_get(&haystack).is_some()
 // }
 
-fn is_container_json(haystack: &str) -> bool {
-    match match_container_get(&haystack) {
-        Some(m) => m.resource == "json",
-        None => false
-    }
-}
-
-
 fn is_container_named(container: &ContainerSummary, container_name: &String) -> bool {
     return Option::is_some(&container.names.clone().unwrap().iter().find(|&y|  { 
         return y.contains(container_name);
@@ -243,16 +236,17 @@ async fn get_container_name(u: &String, container_id: &String) -> Result<String,
 
 #[ntex::main]
 async fn main() -> std::io::Result<()> {
+    dotenv().ok();
+
     let decorator = slog_term::TermDecorator::new().build();
     let drain = slog_term::FullFormat::new(decorator).build().fuse();
     let drain = slog_async::Async::new(drain).build().fuse();
-    let logger = slog::Logger::root(drain, o!());
+    let envlogger = slog_envlogger::new(drain);
+    let logger = slog::Logger::root(envlogger, o!());
 
     let _guard = slog_scope::set_global_logger(logger);
     slog_scope::scope(&slog_scope::logger().new(o!("scope" => "1")), || ());
     let _log_guard = slog_stdlog::init().unwrap();
-
-    dotenv().ok();
 
 
     let proxy_url_env = env::var("PROXY_URL");
