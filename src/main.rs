@@ -5,7 +5,7 @@ extern crate slog_term;
 
 use futures_util::TryStreamExt;
 use ::http::StatusCode;
-use ntex::{http, web::{self, Responder, HttpResponse}};
+use ntex::{http::{self, HttpMessage}, web::{self, HttpResponse, Responder}};
 use std::sync::{Arc, Mutex};
 
 use slog::{Drain, Logger};
@@ -133,13 +133,20 @@ async fn forward(
                         Some(n) => {
                             if n.contains(container_name.get_ref()) { //n.iter().any(|x| x.contains(container_name.get_ref())) {
 
-                                client_resp.content_type("application/json");
+                                if m.resource == "json" {
 
-                                if *scrub_env.get_ref() {
-                                    let mut container = res.json::<ContainerInspect>().await.unwrap();
-                                    container.config.as_mut().unwrap().env = Some(Vec::new());
-                                    Ok(client_resp.json(&container))
+                                    client_resp.content_type("application/json");
+
+                                    if *scrub_env.get_ref() {
+                                        let mut container = res.json::<ContainerInspect>().await.unwrap();
+                                        container.config.as_mut().unwrap().env = Some(Vec::new());
+                                        Ok(client_resp.json(&container))
+                                    } else {
+                                        Ok(client_resp.streaming(res.into_stream()))
+                                    }
+
                                 } else {
+                                    client_resp.content_type(res.content_type());
                                     Ok(client_resp.streaming(res.into_stream()))
                                 }
                             } else {
@@ -190,12 +197,12 @@ fn match_container_get(haystack: &str) -> Option<GetMatch> {
 //    match_container_get(&haystack).is_some()
 // }
 
-// fn is_container_json(haystack: &str) -> bool {
-//     match match_container_get(&haystack) {
-//         Some(m) => m.resource == "json",
-//         None => false
-//     }
-// }
+fn is_container_json(haystack: &str) -> bool {
+    match match_container_get(&haystack) {
+        Some(m) => m.resource == "json",
+        None => false
+    }
+}
 
 
 fn is_container_named(container: &ContainerSummary, container_name: &String) -> bool {
