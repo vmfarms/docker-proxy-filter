@@ -24,6 +24,8 @@ services:
     user: 0:0
     mem_limit: 64M
     read_only: true
+    ports:
+      - 2379:2375
     cap_drop:
       - ALL
     security_opt:

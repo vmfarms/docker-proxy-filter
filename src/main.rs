@@ -4,18 +4,73 @@ extern crate slog_async;
 extern crate slog_term;
 
 use futures_util::TryStreamExt;
-use ntex::{http, web};
-use slog::Drain;
+use ::http::StatusCode;
+use ntex::{http, web::{self, Responder, HttpResponse}};
+use std::sync::{Arc, Mutex};
+
+use slog::{Drain, Logger};
 use dotenv::dotenv;
 use std::env;
-//use std::collections::HashMap;
+use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
+use std::sync::LazyLock;
+use regex::Regex;
+
+#[derive(Clone)]
+struct AppStateWithContainerMap {
+    container_map: Arc<Mutex<HashMap<String, Option<String>>>>, // <- Mutex is necessary to mutate safely across threads
+}
+
+struct GetMatch {
+    id: String,
+    resource: String
+}
+
+// #[derive(Serialize, Deserialize)]
+// struct DockerErrorMessage {
+//     pub message: Option<String>
+// }
 
 #[derive(Serialize, Deserialize)]
-struct Container {
-    Id: String,
-    Names: Vec<String>
+struct ContainerSummary {
+    #[serde(rename = "Id")]
+    pub id: Option<String>,
+
+    #[serde(rename = "Names")]
+    pub names: Option<Vec<String>>,
+
+    pub message: Option<String>,
+
+    #[serde(flatten)]
+    extra: HashMap<String, Value>,
+}
+
+#[derive(Serialize, Deserialize)]
+struct ContainerInspect {
+    #[serde(rename = "Id")]
+    pub id: Option<String>,
+
+    #[serde(rename = "Name")]
+    pub name: Option<String>,
+
+    #[serde(rename = "Config")]
+    pub config: Option<ContainerConfig>,
+
+    pub message: Option<String>,
+
+    #[serde(flatten)]
+    extra: HashMap<String, Value>,
+}
+
+#[derive(Serialize, Deserialize)]
+struct ContainerConfig {
+    #[serde(rename = "Env")]
+    env: Option<Vec<String>>,
+
+    #[serde(flatten)]
+    extra: HashMap<String, Value>,
 }
 
 async fn forward(
@@ -23,33 +78,161 @@ async fn forward(
     body: ntex::util::Bytes,
     client: web::types::State<http::Client>,
     forward_url: web::types::State<url::Url>,
-    container_id: web::types::State<String>,
+    container_name: web::types::State<String>,
+    log: web::types::State<Logger>,
+    data: web::types::State<AppStateWithContainerMap>
 ) -> Result<web::HttpResponse, web::Error> {
     let mut new_url = forward_url.get_ref().clone();
     new_url.set_path(req.uri().path());
     new_url.set_query(req.uri().query());
     let forwarded_req = client.request_from(new_url.as_str(), req.head());
-    let res = forwarded_req
+    let mut res = forwarded_req
         .send_body(body)
         .await
         .map_err(web::Error::from)?;
-    // if new_url.path().contains("containers/json") {
-    //     let content = Vec<>;
-    //     res.json()
-    // }
+
     let mut client_resp = web::HttpResponse::build(res.status());
-    let stream = res.into_stream();
-    Ok(client_resp.streaming(stream))
+
+    info!(log, "test");
+
+    if res.status() == 200 {
+
+        if new_url.path().contains("containers/json") {
+
+            //let fresp = web::HttpResponse::build(res.status()).json(&filtered_containers);
+
+
+            //let txt = String::from_utf8(res.body().await.unwrap().to_vec()).unwrap();
+
+            let containers = &res.json::<Vec<ContainerSummary>>().await.unwrap();
+            
+            let filtered_containers = containers.into_iter()
+                .filter(|&con| is_container_named(con, &container_name.get_ref()))
+                .collect::<Vec<&ContainerSummary>>();
+
+            let fresp = web::HttpResponse::build(res.status()).json(&filtered_containers);
+
+            //client_resp.json(&filtered_containers);
+
+            //let stream = res.into_stream();
+            Ok(fresp)
+        } else {
+
+            match match_container_get(new_url.path()) {
+                Some (m) => {
+                    let mut cm = data.container_map.lock().unwrap();
+                    if !cm.contains_key(&m.id) {
+                        let id_res = get_container_name(&forward_url.to_string(), &m.id, &log).await;
+                        match id_res {
+                            Ok(id) => {
+                                cm.insert(m.id.clone(), Some(id));
+                            }
+                            Err(e) => {
+                                warn!(log, "Could not get container info"; "error" => %e);
+                                cm.insert(m.id.clone(), None);
+                            }
+                        }
+                    }
+
+                    let name_val = cm.get(&m.id).unwrap();
+                    
+                    match name_val {
+                        Some(n) => {
+                            if n.contains(container_name.get_ref()) { //n.iter().any(|x| x.contains(container_name.get_ref())) {
+                                let stream = res.into_stream();
+                                client_resp.content_type("application/json");
+                                Ok(client_resp.streaming(stream))
+                            } else {
+                                client_resp.status(StatusCode::NOT_FOUND);
+                                Ok(client_resp.finish())
+                            }
+                        }
+                        None => {
+                            client_resp.status(StatusCode::NOT_FOUND);
+                            Ok(client_resp.finish())
+                        }
+                    }
+                }
+                None => {
+                    let stream = res.into_stream();
+                    Ok(client_resp.streaming(stream))
+                }
+            }
+        }
+
+    } else {
+        let stream = res.into_stream();
+        Ok(client_resp.streaming(stream))
+    }
+
+
 }
 
-async fn get_container(u: &String, container_name: &String) -> Result<Option<Container>, Box<dyn std::error::Error>> {
+fn match_container_get(haystack: &str) -> Option<GetMatch> {
+    static RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"containers/(?<id>.+)/(?<resource>.+)").unwrap());
+    let captures = RE.captures(haystack);
 
-    let resp = reqwest::get(format!("{}/containers/json", u))
+    let get_match = match captures {
+       Some(cap) => {
+            Some(GetMatch { 
+                id: String::from(cap.name("id").unwrap().as_str()), 
+                resource: String::from(cap.name("resource").unwrap().as_str())
+            })
+       }
+       None => {
+            None
+       }
+    };
+    get_match
+}
+
+// fn is_container_get(haystack: &str) -> bool {
+//    match_container_get(&haystack).is_some()
+// }
+
+// fn is_container_json(haystack: &str) -> bool {
+//     match match_container_get(&haystack) {
+//         Some(m) => m.resource == "json",
+//         None => false
+//     }
+// }
+
+
+fn is_container_named(container: &ContainerSummary, container_name: &String) -> bool {
+    return Option::is_some(&container.names.clone().unwrap().iter().find(|&y|  { 
+        return y.contains(container_name);
+    }));
+}
+
+async fn get_container_name(u: &String, container_id: &String, log: &Logger) -> Result<String, Box<dyn std::error::Error>> {
+
+    let url = format!("{}containers/{id}/json", u, id = container_id);
+    debug!(log, "Get Container URL: {}", url);
+    let resp = reqwest::get(&url)
         .await?
-        .json::<Vec<Container>>()
-        .await?;
-    let container = resp.into_iter().find(|x| Option::is_some(&x.Names.iter().find(|y| y.contains(container_name)))); //y == &container_name
-    Ok(container)
+        .json::<ContainerInspect>()
+        .await;
+        match resp {
+            Ok(json_res) => {
+                if json_res.message.is_some() {
+                    return Err(json_res.message.unwrap().into())
+                }
+                match json_res.name {
+                    Some(v) => {
+                        Ok(v)
+                    }
+                    None => {
+                        return Err("Container has no names".into())
+                    }
+                }
+                // Ok(json_res.names.unwrap())
+            }
+            Err(e) => {
+                return Err(Box::new(e));
+            }
+        }
+
+        //Ok(id)
 }
 
 #[ntex::main]
@@ -90,30 +273,9 @@ async fn main() -> std::io::Result<()> {
         },
     }
 
-    let container_res = get_container(&proxy_url, &container_name).await;
-
-    let container: Container = match container_res {
-        Ok(val) => {
-
-
-            match val {
-                Some(v) => {
-                    info!(log, "Found container matching name '{}': {}", &container_name, v.Id);
-                    v
-                }
-                None => {
-                    crit!(log, "Could not find a contaienr with name '{}'", &container_name);
-                    panic!();
-                }    
-            }
-        },
-        Err(e) => {
-            crit!(log, "Error occurred while trying to get container"; "error" => %e);
-            panic!();
-        },
+    let cm = AppStateWithContainerMap {
+        container_map: Arc::new(Mutex::new(HashMap::<String, Option<String>>::new()))
     };
-
-    info!(log, "fsdf {}", container.Id);
 
     let forward_url = url::Url::parse(&proxy_url)
         .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidData, err))?;
@@ -121,11 +283,13 @@ async fn main() -> std::io::Result<()> {
         web::App::new()
             .state(http::Client::new())
             .state(forward_url.clone())
-            .state(container.Id.clone())
+            .state(container_name.clone())
+            .state(log.clone())
+            .state(cm.clone())
             .wrap(web::middleware::Logger::default())
             .default_service(web::route().to(forward))
     })
-    .bind(("0.0.0.0", 9090))?
+    .bind(("0.0.0.0", 2376))?
     .run()
     .await
 }
