@@ -80,6 +80,7 @@ async fn forward(
     forward_url: web::types::State<url::Url>,
     container_name: web::types::State<String>,
     log: web::types::State<Logger>,
+    scrub_env: web::types::State<bool>,
     data: web::types::State<AppStateWithContainerMap>
 ) -> Result<web::HttpResponse, web::Error> {
     let mut new_url = forward_url.get_ref().clone();
@@ -99,11 +100,6 @@ async fn forward(
 
         if new_url.path().contains("containers/json") {
 
-            //let fresp = web::HttpResponse::build(res.status()).json(&filtered_containers);
-
-
-            //let txt = String::from_utf8(res.body().await.unwrap().to_vec()).unwrap();
-
             let containers = &res.json::<Vec<ContainerSummary>>().await.unwrap();
             
             let filtered_containers = containers.into_iter()
@@ -112,9 +108,6 @@ async fn forward(
 
             let fresp = web::HttpResponse::build(res.status()).json(&filtered_containers);
 
-            //client_resp.json(&filtered_containers);
-
-            //let stream = res.into_stream();
             Ok(fresp)
         } else {
 
@@ -139,9 +132,16 @@ async fn forward(
                     match name_val {
                         Some(n) => {
                             if n.contains(container_name.get_ref()) { //n.iter().any(|x| x.contains(container_name.get_ref())) {
-                                let stream = res.into_stream();
+
                                 client_resp.content_type("application/json");
-                                Ok(client_resp.streaming(stream))
+
+                                if *scrub_env.get_ref() {
+                                    let mut container = res.json::<ContainerInspect>().await.unwrap();
+                                    container.config.as_mut().unwrap().env = Some(Vec::new());
+                                    Ok(client_resp.json(&container))
+                                } else {
+                                    Ok(client_resp.streaming(res.into_stream()))
+                                }
                             } else {
                                 client_resp.status(StatusCode::NOT_FOUND);
                                 Ok(client_resp.finish())
@@ -207,7 +207,7 @@ fn is_container_named(container: &ContainerSummary, container_name: &String) -> 
 async fn get_container_name(u: &String, container_id: &String, log: &Logger) -> Result<String, Box<dyn std::error::Error>> {
 
     let url = format!("{}containers/{id}/json", u, id = container_id);
-    debug!(log, "Get Container URL: {}", url);
+    //debug!(log, "Get Container URL: {}", url);
     let resp = reqwest::get(&url)
         .await?
         .json::<ContainerInspect>()
@@ -222,17 +222,14 @@ async fn get_container_name(u: &String, container_id: &String, log: &Logger) -> 
                         Ok(v)
                     }
                     None => {
-                        return Err("Container has no names".into())
+                        return Err("Container has no name".into())
                     }
                 }
-                // Ok(json_res.names.unwrap())
             }
             Err(e) => {
                 return Err(Box::new(e));
             }
         }
-
-        //Ok(id)
 }
 
 #[ntex::main]
@@ -273,6 +270,18 @@ async fn main() -> std::io::Result<()> {
         },
     }
 
+    let scub_env =  match env::var("SCRUB_ENVS") {
+        Ok(val) => {
+            let truthy = val == "true";
+            info!(log, "SCRUB_ENVS: {}", truthy);
+            truthy
+        },
+        Err(e) => {
+            info!(log, "SCRUB_ENVS: false");
+            false
+        },
+    };
+
     let cm = AppStateWithContainerMap {
         container_map: Arc::new(Mutex::new(HashMap::<String, Option<String>>::new()))
     };
@@ -286,6 +295,7 @@ async fn main() -> std::io::Result<()> {
             .state(container_name.clone())
             .state(log.clone())
             .state(cm.clone())
+            .state(scub_env.clone())
             .wrap(web::middleware::Logger::default())
             .default_service(web::route().to(forward))
     })
