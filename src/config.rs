@@ -1,6 +1,5 @@
 use dotenvy;
 use serde::Deserialize;
-use std::path::PathBuf;
 use tracing::*;
 
 fn default_scrub() -> bool {
@@ -20,8 +19,18 @@ pub struct Config {
     pub port: u16,
 }
 
-pub fn loadenv() -> Result<PathBuf, dotenvy::Error> {
-    dotenvy::dotenv()
+pub fn loadenv() -> Result<(), dotenvy::Error> {
+    match dotenvy::dotenv() {
+        Ok(_) => Ok(()),
+        Err(err) => {
+             // we don't care if there isn't a .env file
+            if err.not_found() {
+                Ok(())
+            } else {
+                Err(err)
+            }
+        }
+    }
 }
 
 pub fn get_config() -> Result<Config, envy::Error> {

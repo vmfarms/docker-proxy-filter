@@ -14,9 +14,16 @@ use proxy::{AppStateWithContainerMap};
 
 #[ntex::main]
 async fn main() -> std::io::Result<()> {
-    let _ = config::loadenv();
+
+    match config::loadenv() {
+        Ok(_) => (),
+        Err(err) => {
+            println!("there was a problem reading .env: {err}");
+        }
+    }
 
     tracing_subscriber::fmt::fmt()
+        // uses RUST_LOG env for filtering log levels and namespaces
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .init();
 

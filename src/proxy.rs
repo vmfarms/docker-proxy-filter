@@ -35,10 +35,12 @@ pub async fn forward(
 
     if res.status() == 200 {
 
+        // if route is to list containers we want to return a filtered list
         if new_url.path().contains("containers/json") {
 
             let containers = &res.json::<Vec<ContainerSummary>>().await.unwrap();
             
+            // filter all containers to only those that have values from CONTAINER_NAMES includes in their names
             let filtered_containers = containers.into_iter()
                 .filter(|&con| docker::is_container_named(con, &container_names.get_ref()))
                 .collect::<Vec<&ContainerSummary>>();
@@ -48,9 +50,15 @@ pub async fn forward(
             Ok(fresp)
         } else {
 
+            // only deal with routes that are for containers like /containers/1234/{some_resource}
             match docker::match_container_get(new_url.path()) {
+                // the regex pulls the container id from the route with a named capture group, avaiable as m.id
                 Some (m) => {
+                    // we keep a stateful hashmap of all requested container ids and their names
+                    // see AppStateWithContainerMap
                     let mut cm = data.container_map.lock().unwrap();
+
+                    // if the map does not already include the container id-name then we try to get it with our own request to docker api
                     if !cm.contains_key(&m.id) {
                         debug!("Requested container Id not in map, trying to inspect: {}", &m.id);
                         let name_res = docker::get_container_name(&forward_url.to_string(), &m.id).await;
@@ -66,13 +74,16 @@ pub async fn forward(
                         }
                     }
 
+                    // then we try to get the name from the stateful hashmap
                     let name_val = cm.get(&m.id).unwrap();
                     
                     match name_val {
                         Some(n) => {
+                            // only return if a response if requested container has a name  that includes values from CONTAINER_NAMES
                             if container_names.get_ref().iter().any(|x| n.contains(x)) {
-                            //if n.contains(container_name.get_ref()) { //n.iter().any(|x| x.contains(container_name.get_ref())) {
 
+                                // if the route resource is specifically the Container Inspect API
+                                // then we may need to scrub Envs if SCRUB_ENVS=true
                                 if m.resource == "json" {
 
                                     client_resp.content_type("application/json");
@@ -102,6 +113,7 @@ pub async fn forward(
                         }
                     }
                 }
+                // if we don't match container route then proxy response through, unmodified
                 None => {
                     let stream = res.into_stream();
                     Ok(client_resp.streaming(stream))

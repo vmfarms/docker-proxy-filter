@@ -1,6 +1,6 @@
 FROM rust:1.90-bookworm as Builder
 
-ENV RUST_LOG=info,docker-proxy-filter=debug
+ENV RUST_LOG=info,docker_proxy_filter=debug
 
 WORKDIR /usr/src/app
 COPY . .
