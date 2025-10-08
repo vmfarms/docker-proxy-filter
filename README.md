@@ -13,16 +13,22 @@ Combined with a socket-proxy container that provides granular endpoint access it
 
 ## Features
 
-### `CONTAINER_NAMES`
+### Container Filtering
+
+#### `CONTAINER_NAMES`
 
 Using this ENV changes Docker API responses:
 
 * Filters [List Containers](https://docs.docker.com/reference/api/engine/version/v1.48/#tag/Container/operation/ContainerList) responses so any container with a name that does not include a value from `CONTAINER_NAMES` is removed.
 * Any other [Container](https://docs.docker.com/reference/api/engine/version/v1.48/#tag/Container) endpoints will return 404 if the container name does not include a value from `CONTAINER_NAMES`
 
-### `SCRUB_ENVS`
+#### `SCRUB_ENVS`
 
-When `true` any responses from the [Container Inspect](https://docs.docker.com/reference/api/engine/version/v1.48/#tag/Container/operation/ContainerInspect) endpoint will have `Config.Env` set to an empty array.
+When `true` any responses from the [Container Inspect](https://docs.docker.com/reference/api/engine/version/v1.48/#tag/Container/operation/ContainerInspect) endpoint will have `Config.Env` set to an empty array. This prevents leaking of sensitive `environment:`/`-e` variables that you passed to your container, over the network.
+
+### More?
+
+If I find use cases for filtering other endpoints they will be implemented in the future! Open a new Issue if you have ideas.
 
 ## Example
 
