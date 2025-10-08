@@ -1,20 +1,11 @@
-#[macro_use]
-extern crate slog;
-extern crate slog_async;
-extern crate slog_term;
-extern crate slog_scope;
-extern crate slog_stdlog;
-#[macro_use]
-extern crate log;
-
-use slog_envlogger;
+use tracing::{debug, error, info, warn};
+use tracing_subscriber;
 
 use futures_util::TryStreamExt;
 use ::http::StatusCode;
 use ntex::{http::{self, HttpMessage}, web::{self}};
 use std::sync::{Arc, Mutex};
 
-use slog::{Drain};
 use dotenvy;
 use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
@@ -259,15 +250,10 @@ async fn get_container_name(u: &String, container_id: &String) -> Result<String,
 #[ntex::main]
 async fn main() -> std::io::Result<()> {
     let _ = dotenvy::dotenv();
-    let decorator = slog_term::TermDecorator::new().build();
-    let drain = slog_term::FullFormat::new(decorator).build().fuse();
-    let drain = slog_async::Async::new(drain).build().fuse();
-    let envlogger = slog_envlogger::new(drain);
-    let logger = slog::Logger::root(envlogger, o!());
 
-    let _guard = slog_scope::set_global_logger(logger);
-    slog_scope::scope(&slog_scope::logger().new(o!("scope" => "1")), || ());
-    let _log_guard = slog_stdlog::init().unwrap();
+    tracing_subscriber::fmt::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .init();
 
     let config = match envy::from_env::<Config>() {
        Ok(config) => { 
