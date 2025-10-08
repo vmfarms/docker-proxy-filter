@@ -270,13 +270,13 @@ async fn main() -> std::io::Result<()> {
 
     let container_names: Vec<String>;
 
-    match env::var("CONTAINER_NAME") {
+    match env::var("CONTAINER_NAMES") {
         Ok(val) => {
             container_names  = val.split(',').map(|x| x.trim().to_string()).collect();
             info!("CONTAINER_NAMES: {}", container_names.join(" | "));
         },
         Err(_) => {
-            error!("Missing CONTAINER_NAME");
+            error!("Missing CONTAINER_NAMES");
             panic!();
         },
     }

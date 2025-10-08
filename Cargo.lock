@@ -285,7 +285,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "docker-container-proxy"
+name = "docker-proxy-filter"
 version = "0.1.0"
 dependencies = [
  "dotenv",

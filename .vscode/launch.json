@@ -8,15 +8,15 @@
         {
             "type": "lldb",
             "request": "launch",
-            "name": "Debug executable 'docker-container-proxy'",
+            "name": "Debug executable 'docker-proxy-filter'",
             "cargo": {
                 "args": [
                     "build",
-                    "--bin=docker-container-proxy",
-                    "--package=docker-container-proxy"
+                    "--bin=docker-proxy-filter",
+                    "--package=docker-proxy-filter"
                 ],
                 "filter": {
-                    "name": "docker-container-proxy",
+                    "name": "docker-proxy-filter",
                     "kind": "bin"
                 }
             },
@@ -26,16 +26,16 @@
         {
             "type": "lldb",
             "request": "launch",
-            "name": "Debug unit tests in executable 'docker-container-proxy'",
+            "name": "Debug unit tests in executable 'docker-proxy-filter'",
             "cargo": {
                 "args": [
                     "test",
                     "--no-run",
-                    "--bin=docker-container-proxy",
-                    "--package=docker-container-proxy"
+                    "--bin=docker-proxy-filter",
+                    "--package=docker-proxy-filter"
                 ],
                 "filter": {
-                    "name": "docker-container-proxy",
+                    "name": "docker-proxy-filter",
                     "kind": "bin"
                 }
             },
