@@ -1,9 +1,10 @@
 services:
   proxy-container:
-    image: foxxmd/docker-proxy-filter
-    environment:
-      - PROXY_URL=http://socket-proxy:2375
-      - CONTAINER_NAME=foo,bar
+    image: docker-proxy-filter
+    build:
+      dockerfile: docker/Dockerfile
+      context: .
+    env_file: .env
     ports:
       - 2375:2375
   socket-proxy:
