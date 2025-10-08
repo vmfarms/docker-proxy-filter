@@ -1,7 +1,5 @@
 FROM rust:1.90-bookworm as Builder
 
-ENV RUST_LOG=info,docker_proxy_filter=debug
-
 WORKDIR /app
 
 RUN cargo init
@@ -23,6 +21,9 @@ RUN export ARCH=$(rustc --print host-tuple); \
     && cp target/$ARCH/release/docker-proxy-filter build/docker-proxy-filter
 
 FROM debian:bookworm-slim
+
+ENV RUST_LOG=info,docker_proxy_filter=debug
+
 # need ssl for web server
 RUN apt-get update && apt-get upgrade -y && apt-get install openssl -y && apt clean && rm -rf /var/lib/apt/lists/*
 # copy built app from generic location
