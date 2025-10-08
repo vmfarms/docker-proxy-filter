@@ -15,8 +15,7 @@ use ntex::{http::{self, HttpMessage}, web::{self}};
 use std::sync::{Arc, Mutex};
 
 use slog::{Drain};
-use dotenv::dotenv;
-use std::env;
+use dotenvy;
 use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -77,6 +76,23 @@ struct ContainerConfig {
 
     #[serde(flatten)]
     extra: HashMap<String, Value>,
+}
+
+#[derive(Deserialize, Debug)]
+struct Config {
+  proxy_url: String,
+  container_names: Vec<String>,
+  #[serde(default="default_scrub")]
+  scrub_envs: bool,
+  #[serde(default="default_port")]
+  port: u16
+}
+
+fn default_scrub() -> bool {
+    false
+}
+fn default_port() -> u16 {
+    2375
 }
 
 async fn forward(
@@ -242,8 +258,7 @@ async fn get_container_name(u: &String, container_id: &String) -> Result<String,
 
 #[ntex::main]
 async fn main() -> std::io::Result<()> {
-    dotenv().ok();
-
+    let _ = dotenvy::dotenv();
     let decorator = slog_term::TermDecorator::new().build();
     let drain = slog_term::FullFormat::new(decorator).build().fuse();
     let drain = slog_async::Async::new(drain).build().fuse();
@@ -254,74 +269,34 @@ async fn main() -> std::io::Result<()> {
     slog_scope::scope(&slog_scope::logger().new(o!("scope" => "1")), || ());
     let _log_guard = slog_stdlog::init().unwrap();
 
-
-    let mut proxy_url: String = String::new();
-
-    match env::var("PROXY_URL") {
-        Ok(val) => {
-            info!("PROXY_URL: {val}");
-            proxy_url.push_str(&val);
-        },
-        Err(_) => {
-            error!("Missing PROXY_URL");
-            panic!();
-        },
-    }
-
-    let container_names: Vec<String>;
-
-    match env::var("CONTAINER_NAMES") {
-        Ok(val) => {
-            container_names  = val.split(',').map(|x| x.trim().to_string()).collect();
-            info!("CONTAINER_NAMES: {}", container_names.join(" | "));
-        },
-        Err(_) => {
-            error!("Missing CONTAINER_NAMES");
-            panic!();
-        },
-    }
-
-    let scub_env =  match env::var("SCRUB_ENVS") {
-        Ok(val) => {
-            let truthy = val == "true";
-            info!("SCRUB_ENVS: {truthy}");
-            truthy
-        },
-        Err(_) => {
-            info!("SCRUB_ENVS: false");
-            false
-        },
-    };
-
-    let mut port = 2375;
-
-    match env::var("PORT") {
-        Ok(val) => {
-            match val.parse::<u16>() {
-                Ok(p) => port = p, 
-                Err(e) =>  warn!("Could not parse PORT to int. Falling back to {}:{} {e}", &port, &e)
-            }
-        },
-        Err(_) => {},
+    let config = match envy::from_env::<Config>() {
+       Ok(config) => { 
+        info!("{:#?}", config);
+        config
+    },
+       Err(error) => {
+        error!("Could not parse envs correctly! {:#?}", error); 
+        panic!("Unable to start due to invalid envs")
+     }
     };
 
     let cm = AppStateWithContainerMap {
         container_map: Arc::new(Mutex::new(HashMap::<String, Option<String>>::new()))
     };
 
-    let forward_url = url::Url::parse(&proxy_url)
+    let forward_url = url::Url::parse(&config.proxy_url)
         .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidData, err))?;
     web::server(move || {
         web::App::new()
             .state(http::Client::new())
             .state(forward_url.clone())
-            .state(container_names.clone())
+            .state(config.container_names.clone())
             .state(cm.clone())
-            .state(scub_env.clone())
+            .state(config.scrub_envs.clone())
             .wrap(web::middleware::Logger::default())
             .default_service(web::route().to(forward))
     })
-    .bind(("0.0.0.0", port))?
+    .bind(("0.0.0.0", config.port))?
     .run()
     .await
 }
