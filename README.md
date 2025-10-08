@@ -30,6 +30,17 @@ When `true` any responses from the [Container Inspect](https://docs.docker.com/r
 
 If I find use cases for filtering other endpoints they will be implemented in the future! Open a new Issue if you have ideas.
 
+## Install
+
+Docker images are available for x86/ARMv7 hosts:
+
+```
+docker.io/foxxmd/docker-proxy-filter:latest
+ghcr.io/foxxmd/docker-proxy-filter:latest
+```
+
+The proxy server is available on port `2375` within the deployed container.
+
 ## Example
 
 ```yaml
