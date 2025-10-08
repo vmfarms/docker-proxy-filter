@@ -293,6 +293,18 @@ async fn main() -> std::io::Result<()> {
         },
     };
 
+    let mut port = 2375;
+
+    match env::var("PORT") {
+        Ok(val) => {
+            match val.parse::<u16>() {
+                Ok(p) => port = p, 
+                Err(e) =>  warn!("Could not parse PORT to int. Falling back to {}:{} {e}", &port, &e)
+            }
+        },
+        Err(_) => {},
+    };
+
     let cm = AppStateWithContainerMap {
         container_map: Arc::new(Mutex::new(HashMap::<String, Option<String>>::new()))
     };
@@ -309,7 +321,7 @@ async fn main() -> std::io::Result<()> {
             .wrap(web::middleware::Logger::default())
             .default_service(web::route().to(forward))
     })
-    .bind(("0.0.0.0", 2376))?
+    .bind(("0.0.0.0", port))?
     .run()
     .await
 }
