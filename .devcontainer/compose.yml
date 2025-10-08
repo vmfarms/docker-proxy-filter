@@ -18,7 +18,7 @@ services:
       - ..:/workspaces:cached
     command: sleep infinity
 
-  dockerproxy:
+  socket-proxy:
     image: wollomatic/socket-proxy:1.10.0
     restart: unless-stopped
     user: 0:0
