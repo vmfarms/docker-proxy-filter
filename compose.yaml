@@ -20,7 +20,7 @@ services:
       - '-loglevel=debug'
       - '-listenip=0.0.0.0'
       - '-allowfrom=proxy-container'
-
+      - '-allowHEAD=/_ping'
       - '-allowGET=/_ping|/(v1\..{1,2}/)?(info|version|containers|events).*'
       - '-allowbindmountfrom=/var/log,/tmp' # restrict bind mounts to specific directories
       - '-watchdoginterval=3600' # check once per hour for socket availability

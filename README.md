@@ -66,6 +66,7 @@ services:
     command:
       - '-loglevel=debug'
       - '-allowGET=/_ping|/(v1\..{1,2}/)?(info|version|containers|events).*'
+      - '-allowHEAD=/_ping'
       - '-listenip=0.0.0.0'
       - '-allowfrom=proxy-filter'
       - '-stoponwatchdog'
