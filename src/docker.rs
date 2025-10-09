@@ -33,18 +33,17 @@ pub fn match_labels_or_names(filter_names: &ContainerNames, filter_labels: &Cont
     if filter_names.is_empty() && filter_labels.is_empty() {
         return true
     }
-    let mut any = false;
     if !filter_names.is_empty() {
         if utils::strings_in_strings(&names, &filter_names) {
-            any = true;
+            return true;
         }
     }
     if !filter_labels.is_empty() {
         if utils::label_match(&labels, &filter_labels) {
-            any = true;
+            return true;
         }
     }
-    any
+    false
 }
 
 pub fn container_summary_match(container: &types::ContainerSummary, container_names: &ContainerNames, container_labels: &ContainerLabels) -> bool {

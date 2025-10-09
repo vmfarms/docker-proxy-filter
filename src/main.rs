@@ -1,3 +1,4 @@
+use tracing::*;
 use ntex::{http, web::{self}};
 use std::sync::{Arc, Mutex};
 

@@ -1,12 +1,16 @@
 use crate::config::ContainerLabels;
+use core::num;
 use std::collections::HashMap;
 use tracing::*;
 
 pub fn strings_in_strings(ref_strings: &Vec<String>, contains_strings: &Vec<String>) -> bool {
-    let matched_str = ref_strings.iter().find(|x| contains_strings.iter().any(|y| x.contains(y)));
-    if matched_str.is_some() {
-        debug!("One of '{}' found in {}", contains_strings.join(","), matched_str.unwrap());
-    }
+    let matched_str = ref_strings.iter().find(|x| contains_strings.iter().any(|y| { 
+        let contains = x.contains(y);
+        if contains {
+            debug!("'{}' found in {}", y, x);
+        }
+        contains
+    }));
 
     matched_str.is_some()
 }
@@ -44,4 +48,8 @@ pub fn label_match(ref_map: &HashMap<String,String>, contains_map: &ContainerLab
     }
 
     return false
+}
+
+pub fn short_id(s: &String) -> String {
+    return format!("{start}...{end}", start = &s[..6], end = &s[s.len() - 6..]);
 }
