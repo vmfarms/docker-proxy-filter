@@ -17,6 +17,9 @@ pub struct ContainerSummary {
 
     pub message: Option<String>,
 
+    #[serde(rename = "Labels")]
+    pub labels: Option<HashMap<String,String>>,
+
     #[serde(flatten)]
     extra: HashMap<String, Value>,
 }
@@ -42,6 +45,8 @@ pub struct ContainerInspect {
 pub struct ContainerConfig {
     #[serde(rename = "Env")]
     pub env: Option<Vec<String>>,
+    #[serde(rename = "Labels")]
+    pub labels: Option<HashMap<String,String>>,
 
     #[serde(flatten)]
     extra: HashMap<String, Value>,

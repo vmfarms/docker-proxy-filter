@@ -1,6 +1,3 @@
-use tracing::*;
-use tracing_subscriber;
-
 use ntex::{http, web::{self}};
 use std::sync::{Arc, Mutex};
 
@@ -9,6 +6,7 @@ use std::collections::HashMap;
 mod config;
 mod docker;
 mod proxy;
+mod utils;
 
 use proxy::{AppStateWithContainerMap};
 
@@ -27,9 +25,9 @@ async fn main() -> std::io::Result<()> {
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .init();
 
-    let config = match config::get_config() {
-       Ok(config) => { 
-        config
+    let (config, port) = match config::get_config() {
+       Ok((config, port)) => { 
+       (config, port)
     },
        Err(_error) => {
         panic!("Unable to start due to invalid envs")
@@ -37,7 +35,7 @@ async fn main() -> std::io::Result<()> {
     };
 
     let cm = AppStateWithContainerMap {
-        container_map: Arc::new(Mutex::new(HashMap::<String, Option<String>>::new()))
+        container_map: Arc::new(Mutex::new(HashMap::<String, Option<bool>>::new()))
     };
 
     let forward_url = url::Url::parse(&config.proxy_url)
@@ -49,10 +47,12 @@ async fn main() -> std::io::Result<()> {
             .state(config.container_names.clone())
             .state(cm.clone())
             .state(config.scrub_envs.clone())
+            .state(config.clone())
+
             .wrap(web::middleware::Logger::default())
             .default_service(web::route().to(proxy::forward))
     })
-    .bind(("0.0.0.0", config.port))?
+    .bind(("0.0.0.0", port))?
     .run()
     .await
 }

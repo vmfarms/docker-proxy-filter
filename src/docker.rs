@@ -1,5 +1,9 @@
 use std::sync::LazyLock;
 use regex::Regex;
+use std::collections::HashMap;
+
+use crate::config::{ContainerLabels, ContainerNames};
+use crate::utils;
 
 pub mod types;
 
@@ -12,7 +16,7 @@ pub fn match_container_get(haystack: &str) -> Option<GetMatch> {
     static RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"containers/(?<id>.+)/(?<resource>.+)").unwrap());
     let captures = RE.captures(haystack);
 
-    let get_match = match captures {
+    match captures {
        Some(cap) => {
             Some(GetMatch { 
                 id: String::from(cap.name("id").unwrap().as_str()), 
@@ -22,20 +26,35 @@ pub fn match_container_get(haystack: &str) -> Option<GetMatch> {
        None => {
             None
        }
-    };
-    get_match
+    }
 }
 
-pub fn is_container_named(container: &types::ContainerSummary, container_names: &Vec<String>) -> bool {
-    return Option::is_some(&container.names.clone().unwrap().iter().find(|&y|  {
-        return container_names.iter().any(|z| y.contains(z));
-    }));
+pub fn match_labels_or_names(filter_names: &ContainerNames, filter_labels: &ContainerLabels, names: &Vec<String>, labels: &HashMap<String, String>) -> bool {
+    if filter_names.is_empty() && filter_labels.is_empty() {
+        return true
+    }
+    let mut any = false;
+    if !filter_names.is_empty() {
+        if utils::strings_in_strings(&names, &filter_names) {
+            any = true;
+        }
+    }
+    if !filter_labels.is_empty() {
+        if utils::label_match(&labels, &filter_labels) {
+            any = true;
+        }
+    }
+    any
 }
 
-pub async fn get_container_name(u: &String, container_id: &String) -> Result<String, Box<dyn std::error::Error>> {
+pub fn container_summary_match(container: &types::ContainerSummary, container_names: &ContainerNames, container_labels: &ContainerLabels) -> bool {
+
+    return match_labels_or_names(container_names, container_labels, &container.names.as_ref().unwrap_or(Vec::new().as_ref()), &container.labels.as_ref().unwrap_or(&HashMap::<String,String>::new()))
+}
+
+pub async fn get_container_info(u: &String, container_id: &String) -> Result<(String, HashMap<String,String>), Box<dyn std::error::Error>> {
 
     let url = format!("{}containers/{id}/json", u, id = container_id);
-    //debug!(log, "Get Container URL: {}", url);
     let resp = reqwest::get(&url)
         .await?
         .json::<types::ContainerInspect>()
@@ -45,14 +64,7 @@ pub async fn get_container_name(u: &String, container_id: &String) -> Result<Str
                 if json_res.message.is_some() {
                     return Err(json_res.message.unwrap().into())
                 }
-                match json_res.name {
-                    Some(v) => {
-                        Ok(v)
-                    }
-                    None => {
-                        return Err("Container has no name".into())
-                    }
-                }
+                Ok((json_res.name.expect("Container has a name"), json_res.config.expect("Container has config").labels.expect("Container has labels")))
             }
             Err(e) => {
                 return Err(Box::new(e));

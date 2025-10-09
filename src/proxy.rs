@@ -5,11 +5,18 @@ use ntex::{http::{self, HttpMessage}, web::{self}};
 use futures_util::TryStreamExt;
 use ::http::StatusCode;
 
+use crate::config::{AppConfig};
 use crate::docker::{self, types::*};
 
 #[derive(Clone)]
 pub struct AppStateWithContainerMap {
-    pub container_map: Arc<Mutex<HashMap<String, Option<String>>>>, // <- Mutex is necessary to mutate safely across threads
+    pub container_map: Arc<Mutex<HashMap<String, Option<bool>>>>, // <- Mutex is necessary to mutate safely across threads
+}
+
+macro_rules! is {
+    ($cond:expr; $if:expr; $else:expr) => {
+        if $cond { $if } else { $else }
+    };
 }
 
 pub async fn forward(
@@ -17,8 +24,7 @@ pub async fn forward(
     body: ntex::util::Bytes,
     client: web::types::State<http::Client>,
     forward_url: web::types::State<url::Url>,
-    container_names: web::types::State<Vec<String>>,
-    scrub_env: web::types::State<bool>,
+    app_config: web::types::State<AppConfig>,
     data: web::types::State<AppStateWithContainerMap>
 ) -> Result<web::HttpResponse, web::Error> {
     let mut new_url = forward_url.get_ref().clone();
@@ -42,7 +48,7 @@ pub async fn forward(
             
             // filter all containers to only those that have values from CONTAINER_NAMES includes in their names
             let filtered_containers = containers.into_iter()
-                .filter(|&con| docker::is_container_named(con, &container_names.get_ref()))
+                .filter(|&con| docker::container_summary_match(con, &app_config.get_ref().container_names, &app_config.get_ref().container_labels))
                 .collect::<Vec<&ContainerSummary>>();
 
             let fresp = web::HttpResponse::build(res.status()).json(&filtered_containers);
@@ -59,28 +65,35 @@ pub async fn forward(
                     let mut cm = data.container_map.lock().unwrap();
 
                     // if the map does not already include the container id-name then we try to get it with our own request to docker api
-                    if !cm.contains_key(&m.id) {
+                    // or if we encountered an error last time then try again
+                    if !cm.contains_key(&m.id) || cm.get(&m.id).unwrap().is_none() {
                         debug!("Requested container Id not in map, trying to inspect: {}", &m.id);
-                        let name_res = docker::get_container_name(&forward_url.to_string(), &m.id).await;
-                        match name_res {
-                            Ok(name) => {
-                                debug!("Container Id {} has name '{}'", &m.id, &name);
-                                cm.insert(m.id.clone(), Some(name));
+                        let info_res = docker::get_container_info(&forward_url.to_string(), &m.id).await;
+                        match info_res {
+                            Ok((name, labels)) => {
+                                let is_container_match = docker::match_labels_or_names(&app_config.get_ref().container_names, &app_config.get_ref().container_labels, &Vec::from([name.clone()]), &labels);
+                                debug!("Container Id {} with name '{}' {} valid", &m.id, name, is!(is_container_match; "is";"is not"));
+                                cm.insert(m.id.clone(), Some(is_container_match));
                             }
                             Err(e) => {
                                 warn!("Could not inspect container {}: {e}", &m.id);
-                                cm.insert(m.id.clone(), None);
+                                if e.to_string().contains("No such container") {
+                                    cm.insert(m.id.clone(), Some(false));
+                                } else {
+                                    // if the error was not a 404 then allow trying again later
+                                    cm.insert(m.id.clone(), None);
+                                }
                             }
                         }
                     }
 
                     // then we try to get the name from the stateful hashmap
-                    let name_val = cm.get(&m.id).unwrap();
+                    let allowed = cm.get(&m.id).unwrap();
                     
-                    match name_val {
+                    match allowed {
                         Some(n) => {
                             // only return if a response if requested container has a name  that includes values from CONTAINER_NAMES
-                            if container_names.get_ref().iter().any(|x| n.contains(x)) {
+                            if *n {
 
                                 // if the route resource is specifically the Container Inspect API
                                 // then we may need to scrub Envs if SCRUB_ENVS=true
@@ -88,7 +101,7 @@ pub async fn forward(
 
                                     client_resp.content_type("application/json");
 
-                                    if *scrub_env.get_ref() {
+                                    if app_config.get_ref().scrub_envs {
                                         let mut container = res.json::<ContainerInspect>().await.unwrap();
                                         container.config.as_mut().unwrap().env = Some(Vec::new());
                                         Ok(client_resp.json(&container))
@@ -101,7 +114,7 @@ pub async fn forward(
                                     Ok(client_resp.streaming(res.into_stream()))
                                 }
                             } else {
-                                debug!("Container {} does not include container filter name, 404ing...", &m.id);
+                                debug!("Container {} does not match container filters, 404ing...", &m.id);
                                 client_resp.status(StatusCode::NOT_FOUND);
                                 Ok(client_resp.json(&DockerErrorMessage { message: format!("No such container: {}", &m.id)}))
                             }
