@@ -15,14 +15,58 @@ Combined with a socket-proxy container that provides granular endpoint access it
 
 ### Container Filtering
 
-#### `CONTAINER_NAMES`
+DPF can modify the responses returned from the Docker API for any [Container related endpoint](https://docs.docker.com/reference/api/engine/version/v1.48/#tag/Container):
 
-Using this ENV changes Docker API responses:
+* Filters [List Containers](https://docs.docker.com/reference/api/engine/version/v1.48/#tag/Container/operation/ContainerList) responses so any container that does not match filters is excluded from the return list
+* Any other [Container](https://docs.docker.com/reference/api/engine/version/v1.48/#tag/Container) endpoints will return 404 if it does not match a filter
 
-* Filters [List Containers](https://docs.docker.com/reference/api/engine/version/v1.48/#tag/Container/operation/ContainerList) responses so any container with a name that does not include a value from `CONTAINER_NAMES` is removed.
-* Any other [Container](https://docs.docker.com/reference/api/engine/version/v1.48/#tag/Container) endpoints will return 404 if the container name does not include a value from `CONTAINER_NAMES`
+#### Filters
 
-#### `SCRUB_ENVS`
+If a container matches **any** of these filters then it is valid and will be returned.
+
+##### `CONTAINER_NAMES`
+
+A comma-delimited list of values that a Container's name may include. Any value that matches will cause a Container to be valid.
+
+Example
+
+```
+CONTAINER_NAMES=foo,bar
+
+Containers:
+
+* myproject-foo-1 <-- valid
+* coolthingbar-2  <-- valid
+* other-container <-- invalid
+```
+
+##### `CONTAINER_LABELS`
+
+A comma-delimited list of labels with optional values (key-value) that any of a Container's labels may include. Any value that matches will cause a Container to be valid.
+
+* If a filter is **only** a key (no `=`) then any Container label key that includes the string will match, regardless of value
+* If a filter is a full key-value (`my.label=value`) then
+  * Container label key must include filter key
+  * Container label value must include filter value
+
+Example
+
+```
+CONTAINER_LABELS=myfoo,com.bar=fun
+
+Container A's labels
+* something=cool     <-- invalid
+* com.something=nice <-- invalid
+* com.bar=fun        <-- valid
+
+Container B's labels
+* something=cool     <-- invalid
+* com.myfoo.aaa=yo   <-- valid
+* com.myfoo.bbb=hey  <-- valid
+* com.bar=sad        <-- invalid
+```
+
+#### `SCRUB_ENVS` Modifier
 
 When `true` any responses from the [Container Inspect](https://docs.docker.com/reference/api/engine/version/v1.48/#tag/Container/operation/ContainerInspect) endpoint will have `Config.Env` set to an empty array. This prevents leaking of sensitive `environment:`/`-e` variables that you passed to your container, over the network.
 
@@ -133,9 +177,10 @@ Forbidden
 
 All configuration is done through environmental variables.
 
+|        Key         | Required | Default |                                                                          Description                                                                          |
+|--------------------|----------|---------|---------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `PROXY_URL`        | yes      |         | The fully-qualified URL to proxy API requests EX `http://socket-proxy:2375`                                                                                   |
+| `CONTAINER_NAMES`  | no       |         | A comma-delimited list of values to compare against a container name.                                                                                         |
+| `CONTAINER_LABELS` | no       |         | A comma-delimited list of key-values to compare against container labels.                                                                                     |
+| `SCRUB_ENVS`       | no       | false   | Remove `Env` list from [container inspect API](https://docs.docker.com/reference/api/engine/version/v1.48/#tag/Container/operation/ContainerInspect) response |
 
-|        Key        | Required | Default |                                                                          Description                                                                          |
-|-------------------|----------|---------|---------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `PROXY_URL`       | yes      |         | The fully-qualified URL to proxy API requests EX `http://socket-proxy:2375`                                                                                   |
-| `CONTAINER_NAMES` | yes      |         | A comma-delimited list of values. Any container that contains any value as a substring will be allowed.                                                       |
-| `SCRUB_ENVS`      | no       | false   | Remove `Env` list from [container inspect API](https://docs.docker.com/reference/api/engine/version/v1.48/#tag/Container/operation/ContainerInspect) response |
