@@ -1,5 +1,4 @@
 use crate::config::ContainerLabels;
-use core::num;
 use std::collections::HashMap;
 use tracing::*;
 
