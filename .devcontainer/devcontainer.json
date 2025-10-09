@@ -19,7 +19,15 @@
 	// Use 'forwardPorts' to make a list of ports inside the container available locally.
 	"forwardPorts": [
 		2375
-	]
+	],
+	"customizations": {
+		"vscode": {
+			"extensions": [
+				"vadimcn.vscode-lldb",
+				"rust-lang.rust-analyzer"
+			]
+		}
+	}
 
 	// Use 'postCreateCommand' to run commands after the container is created.
 
