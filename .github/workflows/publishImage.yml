@@ -15,7 +15,7 @@ on:
       - '*.*.*'
     # don't trigger if just updating docs
     paths-ignore:
-      - 'README.md'
+      - '*.md'
       - '.github/**'
       - '.vscode/**'
       - '.devcontainer/**'
