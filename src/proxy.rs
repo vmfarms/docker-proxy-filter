@@ -88,7 +88,7 @@ pub async fn forward(
                     // or if we encountered an error last time then try again
                     if !cm.contains_key(&m.id) || cm.get(&m.id).unwrap().is_none() {
                         debug!("Requested Id not in map, trying to inspect...");
-                        let info_res = docker::get_container_info(&forward_url.to_string(), &m.id).await;
+                        let info_res = docker::get_container_info(&client, &forward_url, &m.id).await;
                         match info_res {
                             Ok((name, labels)) => {
                                 let is_container_match = docker::match_labels_or_names(&app_config.get_ref().container_names, &app_config.get_ref().container_labels, &Vec::from([name.clone()]), &labels);

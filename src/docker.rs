@@ -5,6 +5,8 @@ use std::collections::HashMap;
 use crate::config::{ContainerLabels, ContainerNames};
 use crate::utils;
 
+use ntex::{http::{self}, web::{self}};
+
 pub mod types;
 
 pub struct GetMatch {
@@ -51,22 +53,34 @@ pub fn container_summary_match(container: &types::ContainerSummary, container_na
     return match_labels_or_names(container_names, container_labels, &container.names.as_ref().unwrap_or(Vec::new().as_ref()), &container.labels.as_ref().unwrap_or(&HashMap::<String,String>::new()))
 }
 
-pub async fn get_container_info(u: &String, container_id: &String) -> Result<(String, HashMap<String,String>), Box<dyn std::error::Error>> {
+pub async fn get_container_info(client: &web::types::State<http::Client>, u: &web::types::State<url::Url>, container_id: &String) -> Result<(String, HashMap<String,String>), Box<dyn std::error::Error>> {
 
-    let url = format!("{}containers/{id}/json", u, id = container_id);
-    let resp = reqwest::get(&url)
-        .await?
-        .json::<types::ContainerInspect>()
-        .await;
-        match resp {
-            Ok(json_res) => {
-                if json_res.message.is_some() {
-                    return Err(json_res.message.unwrap().into())
+    let mut uri = u.get_ref().clone();
+    uri.set_path(format!("containers/{id}/json", id = container_id).as_str());
+
+    let mut res = client.get(uri.to_string())
+    .send()
+    .await;
+       // .map_err(web::Error::from)?;
+
+    match res {
+        Ok(mut okres) => {
+            let info_res = okres.json::<types::ContainerInspect>()
+            .limit(2097152).await;
+            match info_res {
+                Ok(json_res) => {
+                    if json_res.message.is_some() {
+                        return Err(json_res.message.unwrap().into())
+                    }
+                    Ok((json_res.name.expect("Container has a name"), json_res.config.expect("Container has config").labels.expect("Container has labels")))
+                },
+                Err(e) => {
+                    return Err(Box::new(e));
                 }
-                Ok((json_res.name.expect("Container has a name"), json_res.config.expect("Container has config").labels.expect("Container has labels")))
             }
-            Err(e) => {
-                return Err(Box::new(e));
-            }
+        },
+        Err(e) => {
+            return Err(Box::new(e));
         }
+    }
 }
