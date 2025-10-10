@@ -11,7 +11,7 @@ It does not connect directly to the Docker socket: it designed to be used with a
 
 Combined with a socket-proxy container that provides granular endpoint access it's possible to expose only information about specific containers in a read-only context.
 
-See [**Use Cases**](/usecases.md) for some common scenarios with popular apps where DPF can come in handy.
+[**Read the blog post**](https://blog.foxxmd.dev/posts/restricting-socket-proxy-by-container/) explaining why DPF is needed and how to use it, or check out [**Use Cases**](/usecases.md) for some common scenarios with popular apps where DPF can come in handy.
 
 ## Features
 
