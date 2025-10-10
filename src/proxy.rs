@@ -46,7 +46,18 @@ pub async fn forward(
         if new_url.path().contains("containers/json") {
             let _list_span = span!(Level::DEBUG, "Container List").entered();
 
-            let containers = &res.json::<Vec<ContainerSummary>>().await.unwrap();
+            let container_res = &res.json::<Vec<ContainerSummary>>()
+            // 2mb in bytes
+            .limit(2097152).await;
+
+            let containers = match container_res {
+                Ok(list_res) => {
+                    list_res
+                }
+                Err(e) => {
+                    panic!("{e}");
+                }
+            };
             
             // filter all containers to only those that have values from CONTAINER_NAMES includes in their names
             let filtered_containers = containers.into_iter()
