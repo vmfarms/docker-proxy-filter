@@ -59,11 +59,11 @@ pub async fn forward(
                 }
             };
             
-            // filter all containers to only those that have values from CONTAINER_NAMES includes in their names
+            // filter containers by include/exclude rules
             let filtered_containers = containers.into_iter()
-                .filter(|&con| { 
+                .filter(|&con| {
                     let _list_span = span!(Level::DEBUG, "Container", id = utils::short_id(con.id.as_ref().unwrap())).entered();
-                    docker::container_summary_match(con, &app_config.get_ref().container_names, &app_config.get_ref().container_labels)
+                    docker::container_summary_match(con, app_config.get_ref())
                 })
                 .collect::<Vec<&ContainerSummary>>();
 
@@ -91,7 +91,7 @@ pub async fn forward(
                         let info_res = docker::get_container_info(&client, &forward_url, &m.id).await;
                         match info_res {
                             Ok((name, labels)) => {
-                                let is_container_match = docker::match_labels_or_names(&app_config.get_ref().container_names, &app_config.get_ref().container_labels, &Vec::from([name.clone()]), &labels);
+                                let is_container_match = docker::container_info_match(app_config.get_ref(), &name, &labels);
                                 debug!("Recording container '{}' {} valid", name, is!(is_container_match; "as";"as not"));
                                 cm.insert(m.id.clone(), Some(is_container_match));
                             }

@@ -35,8 +35,11 @@ async fn main() -> std::io::Result<()> {
      }
     };
 
-    if config.container_labels.is_empty() && config.container_names.is_empty() {
+    if config.container_labels.is_empty() && config.container_names.is_empty() && config.exclude_labels.is_empty() && config.exclude_names.is_empty() {
         warn!("You have not defined any filters! All containers will be exposed. If you are using docker-proxy-filter only for SCRUB_ENVS then this is expected behavior, otherwise check your environmental variables.");
+    }
+    if !config.exclude_labels.is_empty() || !config.exclude_names.is_empty() {
+        info!("Exclude filters active — containers matching EXCLUDE_LABELS/EXCLUDE_NAMES will be hidden");
     }
 
     let cm = AppStateWithContainerMap {
