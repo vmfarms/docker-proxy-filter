@@ -2,7 +2,6 @@ use tracing::*;
 use std::sync::{Arc, Mutex};
 use std::collections::HashMap;
 use ntex::{http::{self, HttpMessage}, web::{self}};
-use futures_util::TryStreamExt;
 use ::http::StatusCode;
 
 use crate::config::{AppConfig};
@@ -71,9 +70,8 @@ pub async fn forward(
                 })
                 .collect::<Vec<&ContainerSummary>>();
 
-            let fresp = web::HttpResponse::build(res.status()).json(&filtered_containers);
             debug!("{} of {} containers valid", filtered_containers.len(), containers.len());
-            Ok(fresp)
+            Ok(client_resp.json(&filtered_containers))
         } else {
 
             // only deal with routes that are for containers like /containers/1234/{some_resource}
@@ -84,15 +82,18 @@ pub async fn forward(
                     let short_cid = utils::short_id(&m.id); //format!("{start}...{end}", start = &m.id[..6], end = &m.id[&m.id.len() - 6..]);
                     let _con_span = span!(Level::DEBUG, "Container", id = short_cid).entered();
                     debug!("Matched container route with Id {}", &m.id);
-                    // we keep a stateful hashmap of all requested container ids and their names
-                    // see AppStateWithContainerMap
-                    let mut cm = data.container_map.lock().unwrap();
 
-                    // if the map does not already include the container id-name then we try to get it with our own request to docker api
-                    // or if we encountered an error last time then try again
-                    if !cm.contains_key(&m.id) || cm.get(&m.id).unwrap().is_none() {
+                    // Check the map without holding the lock across await points.
+                    // Holding std::sync::Mutex across .await deadlocks the single-threaded runtime.
+                    let needs_inspect = {
+                        let cm = data.container_map.lock().unwrap();
+                        !cm.contains_key(&m.id) || cm.get(&m.id).unwrap().is_none()
+                    };
+
+                    if needs_inspect {
                         debug!("Requested Id not in map, trying to inspect...");
                         let info_res = docker::get_container_info(&client, &forward_url, &m.id).await;
+                        let mut cm = data.container_map.lock().unwrap();
                         match info_res {
                             Ok((name, labels)) => {
                                 let is_container_match = docker::container_info_match(app_config.get_ref(), &name, &labels);
@@ -104,15 +105,14 @@ pub async fn forward(
                                 if e.to_string().contains("No such container") {
                                     cm.insert(m.id.clone(), Some(false));
                                 } else {
-                                    // if the error was not a 404 then allow trying again later
                                     cm.insert(m.id.clone(), None);
                                 }
                             }
                         }
                     }
 
-                    // then we try to get the name from the stateful hashmap
-                    let allowed = cm.get(&m.id).unwrap();
+                    let allowed = data.container_map.lock().unwrap();
+                    let allowed = allowed.get(&m.id).unwrap();
                     
                     match allowed {
                         Some(n) => {
@@ -130,12 +130,14 @@ pub async fn forward(
                                         container.config.as_mut().unwrap().env = Some(Vec::new());
                                         Ok(client_resp.json(&container))
                                     } else {
-                                        Ok(client_resp.streaming(res.into_stream()))
+                                        let body = res.body().limit(2097152).await.map_err(web::Error::from)?;
+                                        Ok(client_resp.body(body))
                                     }
 
                                 } else {
                                     client_resp.content_type(res.content_type());
-                                    Ok(client_resp.streaming(res.into_stream()))
+                                    let body = res.body().limit(2097152).await.map_err(web::Error::from)?;
+                                    Ok(client_resp.body(body))
                                 }
                             } else {
                                 debug!("Does not match container filters, 404ing...");
@@ -152,15 +154,15 @@ pub async fn forward(
                 }
                 // if we don't match container route then proxy response through, unmodified
                 None => {
-                    let stream = res.into_stream();
-                    Ok(client_resp.streaming(stream))
+                    let body = res.body().limit(2097152).await.map_err(web::Error::from)?;
+                    Ok(client_resp.body(body))
                 }
             }
         }
 
     } else {
-        let stream = res.into_stream();
-        Ok(client_resp.streaming(stream))
+        let body = res.body().limit(2097152).await.map_err(web::Error::from)?;
+        Ok(client_resp.body(body))
     }
 
 

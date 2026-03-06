@@ -1,5 +1,5 @@
 use tracing::*;
-use ntex::{http, web::{self}};
+use ntex::{http, web::{self}, time::Seconds};
 use std::sync::{Arc, Mutex};
 
 use std::collections::HashMap;
@@ -61,6 +61,9 @@ async fn main() -> std::io::Result<()> {
                             .limit(128)
                             .finish()
                     )
+                    // Docker operations (stop, build, pull) can take minutes.
+                    // Default 5s timeout causes "Timeout while waiting for response".
+                    .timeout(Seconds(300))
                     .finish()
             )
             .state(forward_url.clone())
