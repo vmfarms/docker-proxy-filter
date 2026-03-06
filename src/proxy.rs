@@ -10,7 +10,7 @@ use crate::utils;
 
 #[derive(Clone)]
 pub struct AppStateWithContainerMap {
-    pub container_map: Arc<Mutex<HashMap<String, Option<bool>>>>, // <- Mutex is necessary to mutate safely across threads
+    pub container_map: Arc<Mutex<HashMap<String, Option<bool>>>>,
 }
 
 macro_rules! is {
@@ -36,35 +36,32 @@ pub async fn forward(
         .await
         .map_err(web::Error::from)?;
 
-    let mut client_resp = web::HttpResponse::build(res.status());
-    client_resp.content_type(res.content_type());
+    let status = res.status();
+    let content_type = res.content_type().to_string();
+
+    // Buffer the ENTIRE response body immediately to release the upstream
+    // connection back to the pool. Without this, concurrent requests each
+    // hold an open connection while making inspect sub-requests, exhausting
+    // the pool and deadlocking the single-threaded runtime.
+    let res_body = res.body().limit(2097152).await.map_err(web::Error::from)?;
+
+    let mut client_resp = web::HttpResponse::build(status);
+    client_resp.content_type(content_type.as_str());
     // Prevent the Docker client (Go net/http) from reusing this connection.
-    // Without this, chunked transfer encoding terminators arrive on pooled
-    // connections and produce "Unsolicited response on idle HTTP channel" warnings.
     client_resp.header("Connection", "close");
 
-    if res.status() == 200 {
+    if status == 200 {
 
-        // if route is to list containers we want to return a filtered list
         if new_url.path().contains("containers/json") {
             let _list_span = span!(Level::DEBUG, "Container List").entered();
 
-            let container_res = &res.json::<Vec<ContainerSummary>>()
-            // 2mb in bytes
-            .limit(2097152).await;
-
-            let containers = match container_res {
-                Ok(list_res) => {
-                    list_res
-                }
-                Err(e) => {
-                    panic!("{e}");
-                }
+            let containers: Vec<ContainerSummary> = match serde_json::from_slice(&res_body) {
+                Ok(list) => list,
+                Err(e) => { panic!("{e}"); }
             };
-            
-            // filter containers by include/exclude rules
-            let filtered_containers = containers.into_iter()
-                .filter(|&con| {
+
+            let filtered_containers = containers.iter()
+                .filter(|con| {
                     let _list_span = span!(Level::DEBUG, "Container", id = utils::short_id(con.id.as_ref().unwrap())).entered();
                     docker::container_summary_match(con, app_config.get_ref())
                 })
@@ -74,17 +71,12 @@ pub async fn forward(
             Ok(client_resp.json(&filtered_containers))
         } else {
 
-            // only deal with routes that are for containers like /containers/1234/{some_resource}
             match docker::match_container_get(new_url.path()) {
-                // the regex pulls the container id from the route with a named capture group, avaiable as m.id
-            
                 Some (m) => {
-                    let short_cid = utils::short_id(&m.id); //format!("{start}...{end}", start = &m.id[..6], end = &m.id[&m.id.len() - 6..]);
+                    let short_cid = utils::short_id(&m.id);
                     let _con_span = span!(Level::DEBUG, "Container", id = short_cid).entered();
                     debug!("Matched container route with Id {}", &m.id);
 
-                    // Check the map without holding the lock across await points.
-                    // Holding std::sync::Mutex across .await deadlocks the single-threaded runtime.
                     let needs_inspect = {
                         let cm = data.container_map.lock().unwrap();
                         !cm.contains_key(&m.id) || cm.get(&m.id).unwrap().is_none()
@@ -113,31 +105,23 @@ pub async fn forward(
 
                     let allowed = data.container_map.lock().unwrap();
                     let allowed = allowed.get(&m.id).unwrap();
-                    
+
                     match allowed {
                         Some(n) => {
-                            // only return if a response if requested container has a name  that includes values from CONTAINER_NAMES
                             if *n {
                                 debug!("Matched container filters");
-                                // if the route resource is specifically the Container Inspect API
-                                // then we may need to scrub Envs if SCRUB_ENVS=true
                                 if m.resource == "json" {
-
                                     client_resp.content_type("application/json");
-
                                     if app_config.get_ref().scrub_envs {
-                                        let mut container = res.json::<ContainerInspect>().await.unwrap();
+                                        let mut container: ContainerInspect = serde_json::from_slice(&res_body).unwrap();
                                         container.config.as_mut().unwrap().env = Some(Vec::new());
                                         Ok(client_resp.json(&container))
                                     } else {
-                                        let body = res.body().limit(2097152).await.map_err(web::Error::from)?;
-                                        Ok(client_resp.body(body))
+                                        Ok(client_resp.body(res_body))
                                     }
-
                                 } else {
-                                    client_resp.content_type(res.content_type());
-                                    let body = res.body().limit(2097152).await.map_err(web::Error::from)?;
-                                    Ok(client_resp.body(body))
+                                    client_resp.content_type(content_type.as_str());
+                                    Ok(client_resp.body(res_body))
                                 }
                             } else {
                                 debug!("Does not match container filters, 404ing...");
@@ -152,18 +136,13 @@ pub async fn forward(
                         }
                     }
                 }
-                // if we don't match container route then proxy response through, unmodified
                 None => {
-                    let body = res.body().limit(2097152).await.map_err(web::Error::from)?;
-                    Ok(client_resp.body(body))
+                    Ok(client_resp.body(res_body))
                 }
             }
         }
 
     } else {
-        let body = res.body().limit(2097152).await.map_err(web::Error::from)?;
-        Ok(client_resp.body(body))
+        Ok(client_resp.body(res_body))
     }
-
-
 }
