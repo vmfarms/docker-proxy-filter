@@ -50,7 +50,19 @@ async fn main() -> std::io::Result<()> {
         .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidData, err))?;
     web::server(move || {
         web::App::new()
-            .state(http::Client::new())
+            .state(
+                http::Client::build()
+                    .connector(
+                        http::client::Connector::default()
+                            // Allow many concurrent connections to the upstream
+                            // socket-proxy. Without this, streaming endpoints
+                            // (events, stats, attach) exhaust the default pool
+                            // and block all subsequent requests.
+                            .limit(128)
+                            .finish()
+                    )
+                    .finish()
+            )
             .state(forward_url.clone())
             .state(config.container_names.clone())
             .state(cm.clone())

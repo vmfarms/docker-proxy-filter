@@ -39,6 +39,10 @@ pub async fn forward(
 
     let mut client_resp = web::HttpResponse::build(res.status());
     client_resp.content_type(res.content_type());
+    // Prevent the Docker client (Go net/http) from reusing this connection.
+    // Without this, chunked transfer encoding terminators arrive on pooled
+    // connections and produce "Unsolicited response on idle HTTP channel" warnings.
+    client_resp.header("Connection", "close");
 
     if res.status() == 200 {
 
