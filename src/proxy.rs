@@ -19,6 +19,21 @@ macro_rules! is {
     };
 }
 
+/// Returns true for Docker API endpoints that stream large/long-lived responses
+/// (image pull/push/build, container logs/attach/exec). These must NOT be
+/// buffered -- they can be gigabytes or run indefinitely.
+fn is_streaming_endpoint(path: &str) -> bool {
+    // Image operations: POST /images/create (pull), POST /images/*/push, POST /build
+    if path.contains("/images/create") || path.contains("/push") || path.contains("/build") {
+        return true;
+    }
+    // Container streaming: logs, attach, exec/*/start
+    if path.contains("/logs") || path.contains("/attach") || path.contains("/exec/") {
+        return true;
+    }
+    false
+}
+
 pub async fn forward(
     req: web::HttpRequest,
     body: ntex::util::Bytes,
@@ -30,6 +45,22 @@ pub async fn forward(
     let mut new_url = forward_url.get_ref().clone();
     new_url.set_path(req.uri().path());
     new_url.set_query(req.uri().query());
+
+    // Streaming endpoints (image pull, logs, attach, build) pass through
+    // without buffering -- they can be gigabytes or run indefinitely.
+    if is_streaming_endpoint(new_url.path()) {
+        debug!("Streaming endpoint: {}", new_url.path());
+        let forwarded_req = client.request_from(new_url.as_str(), req.head());
+        let res = forwarded_req
+            .send_body(body)
+            .await
+            .map_err(web::Error::from)?;
+        let mut client_resp = web::HttpResponse::build(res.status());
+        client_resp.content_type(res.content_type().to_string().as_str());
+        client_resp.header("Connection", "close");
+        return Ok(client_resp.streaming(res));
+    }
+
     let forwarded_req = client.request_from(new_url.as_str(), req.head());
     let mut res = forwarded_req
         .send_body(body)
